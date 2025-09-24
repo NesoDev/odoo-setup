@@ -1,0 +1,29 @@
+backup_dst: ''
+cidr_whitelist: null
+domains_prod: {}
+domains_test: {}
+gitlab_url: ''
+odoo_admin_passwd: "PASSWORD"
+odoo_dbfilter: ^prod
+odoo_initial_lang: es_ES
+odoo_listdb: false
+odoo_listdb_staging: false
+odoo_oci_image: ''
+odoo_proxy: traefik
+odoo_version: 17.0
+paths_with_crawlers:
+- /web/image/website
+paths_without_crawlers:
+- /web
+- /website/info
+postgres_dbname: prod
+postgres_exposed: false
+postgres_username: odoo
+postgres_version: '16'
+postgres_password: "PASSWORD"
+project_author: AUTHOR
+project_license: MIT
+project_name: PROJECT_NAME
+smtp_default_from: ''
+smtp_relay_host: ''
+traefik_version: 2
