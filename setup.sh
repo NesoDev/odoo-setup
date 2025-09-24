@@ -70,6 +70,10 @@ copier copy gh:Tecnativa/doodba-copier-template ./app --trust --data-file ./copi
 
 cd app
 
+sudo usermod -aG docker $USER
+
+newgrp docker
+
 invoke git-aggregate
 
 invoke img-build --pull
