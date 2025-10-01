@@ -2,10 +2,6 @@
 
 set -e
 
-# Array para almacenar el estado de cada comando
-declare -A COMMAND_STATUS
-COMMAND_ORDER=()
-
 # Archivo temporal para compartir estados entre procesos
 STATUS_FILE="/tmp/doodba_setup_status_$$.txt"
 > "$STATUS_FILE"
@@ -29,41 +25,48 @@ show_summary() {
     local error_count=0
     local skip_count=0
     
-    # Leer todos los estados del archivo
-    while IFS='|' read -r cmd status; do
-        local symbol=""
-        local color=""
+    if [ -f "$STATUS_FILE" ] && [ -s "$STATUS_FILE" ]; then
+        # Leer todos los estados del archivo
+        while IFS='|' read -r cmd status; do
+            [ -z "$cmd" ] && continue
+            
+            local symbol=""
+            local color=""
+            
+            case "$status" in
+                "SUCCESS")
+                    symbol="✓"
+                    color="\033[0;32m"
+                    ((success_count++))
+                    ;;
+                "ERROR")
+                    symbol="✗"
+                    color="\033[0;31m"
+                    ((error_count++))
+                    ;;
+                "SKIPPED")
+                    symbol="○"
+                    color="\033[0;33m"
+                    ((skip_count++))
+                    ;;
+            esac
+            
+            printf "${color}[${symbol}] %-50s %s\033[0m\n" "$cmd" "$status"
+        done < "$STATUS_FILE"
         
-        case "$status" in
-            "SUCCESS")
-                symbol="✓"
-                color="\033[0;32m"
-                ((success_count++))
-                ;;
-            "ERROR")
-                symbol="✗"
-                color="\033[0;31m"
-                ((error_count++))
-                ;;
-            "SKIPPED")
-                symbol="○"
-                color="\033[0;33m"
-                ((skip_count++))
-                ;;
-        esac
+        local total=$((success_count + error_count + skip_count))
         
-        printf "${color}[${symbol}] %-50s %s\033[0m\n" "$cmd" "$status"
-    done < "$STATUS_FILE"
-    
-    local total=$((success_count + error_count + skip_count))
-    
-    echo ""
-    echo "=========================================="
-    printf "Total: %d | " "$total"
-    printf "\033[0;32mÉxitos: %d\033[0m | " "$success_count"
-    printf "\033[0;31mErrores: %d\033[0m | " "$error_count"
-    printf "\033[0;33mOmitidos: %d\033[0m\n" "$skip_count"
-    echo "=========================================="
+        echo ""
+        echo "=========================================="
+        printf "Total: %d | " "$total"
+        printf "\033[0;32mÉxitos: %d\033[0m | " "$success_count"
+        printf "\033[0;31mErrores: %d\033[0m | " "$error_count"
+        printf "\033[0;33mOmitidos: %d\033[0m\n" "$skip_count"
+        echo "=========================================="
+    else
+        echo "No se registraron estados."
+        echo "=========================================="
+    fi
     
     # Limpiar archivo temporal
     rm -f "$STATUS_FILE"
@@ -253,9 +256,31 @@ if ! docker compose version &> /dev/null; then
     fi
 fi
 
+# Función para esperar a que PostgreSQL esté lista
+wait_for_postgres() {
+    local max_attempts=30
+    local attempt=1
+    
+    echo "Esperando que PostgreSQL esté lista..."
+    
+    while [ $attempt -le $max_attempts ]; do
+        if docker compose exec -T db pg_isready -U odoo &> /dev/null; then
+            echo "PostgreSQL está lista!"
+            return 0
+        fi
+        
+        echo "Intento $attempt/$max_attempts - PostgreSQL aún no está lista..."
+        sleep 2
+        ((attempt++))
+    done
+    
+    echo "Timeout: PostgreSQL no respondió después de $max_attempts intentos"
+    return 1
+}
+
 sg docker "/bin/bash -c '
-cd $(pwd)
-source $(dirname $(pwd))/venv/bin/activate
+cd \"$(pwd)\"
+source \"$(dirname $(pwd))/venv/bin/activate\"
 export DOCKER_COMPOSE_CMD=\"docker compose\"
 
 # Verificar comando docker compose
@@ -270,7 +295,7 @@ STATUS_FILE=\"$STATUS_FILE\"
 echo \"Usando Docker Compose: \$DOCKER_COMPOSE_CMD\"
 
 echo \"Ejecutando git-aggregate...\"
-if invoke git-aggregate; then
+if invoke git-aggregate 2>&1; then
     echo \"Invoke: git-aggregate|SUCCESS\" >> \"\$STATUS_FILE\"
 else
     echo \"Invoke: git-aggregate|ERROR\" >> \"\$STATUS_FILE\"
@@ -278,7 +303,7 @@ else
 fi
 
 echo \"Ejecutando img-build...\"
-if invoke img-build --pull; then
+if invoke img-build --pull 2>&1; then
     echo \"Invoke: img-build|SUCCESS\" >> \"\$STATUS_FILE\"
 else
     echo \"Invoke: img-build|ERROR\" >> \"\$STATUS_FILE\"
@@ -286,16 +311,34 @@ else
 fi
 
 echo \"Ejecutando start...\"
-if invoke start; then
+if invoke start 2>&1; then
     echo \"Invoke: start|SUCCESS\" >> \"\$STATUS_FILE\"
 else
     echo \"Invoke: start|ERROR\" >> \"\$STATUS_FILE\"
     echo \"Error en start, continuando...\"
 fi
 
-# Esperar a que la base de datos esté lista
-echo \"Esperando que la base de datos esté lista...\"
-sleep 10
+# Esperar a que PostgreSQL esté lista
+echo \"Verificando estado de PostgreSQL...\"
+MAX_ATTEMPTS=30
+ATTEMPT=1
+
+while [ \$ATTEMPT -le \$MAX_ATTEMPTS ]; do
+    if \$DOCKER_COMPOSE_CMD exec -T db pg_isready -U odoo &> /dev/null; then
+        echo \"PostgreSQL está lista después de \$ATTEMPT intentos!\"
+        echo \"Espera de PostgreSQL|SUCCESS\" >> \"\$STATUS_FILE\"
+        break
+    fi
+    
+    echo \"Intento \$ATTEMPT/\$MAX_ATTEMPTS - Esperando PostgreSQL...\"
+    sleep 3
+    ((ATTEMPT++))
+    
+    if [ \$ATTEMPT -gt \$MAX_ATTEMPTS ]; then
+        echo \"Timeout: PostgreSQL no está lista\"
+        echo \"Espera de PostgreSQL|ERROR\" >> \"\$STATUS_FILE\"
+    fi
+done
 
 echo \"Inicializando base de datos (con demo)...\"
 if \$DOCKER_COMPOSE_CMD run --rm odoo --stop-after-init -i base 2>&1; then
@@ -314,7 +357,7 @@ else
 fi
 
 echo \"Reiniciando servicios...\"
-if invoke restart; then
+if invoke restart 2>&1; then
     echo \"Invoke: restart|SUCCESS\" >> \"\$STATUS_FILE\"
 else
     echo \"Invoke: restart|ERROR\" >> \"\$STATUS_FILE\"
