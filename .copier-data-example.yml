@@ -3,7 +3,7 @@ cidr_whitelist: null
 domains_prod: {}
 domains_test: {}
 gitlab_url: ''
-odoo_admin_passwd: "X7jK9pQ3mT5vR2sF8gH4lZ6bN1dC0eW7uY9iO2aP5tV4rE3qM8fG6hJ0kL2zX1cB"
+odoo_admin_passwd: "pass"
 odoo_dbfilter: ^prod
 odoo_initial_lang: es_ES
 odoo_listdb: false
@@ -20,10 +20,10 @@ postgres_dbname: prod
 postgres_exposed: false
 postgres_username: odoo
 postgres_version: '16'
-postgres_password: "A4sD6fG8hJ0kL2zX1cV3bN5mP7oQ9iR2tY4uW6eE8rF0gH2jK4lM6nB8pV0qS2"
-project_author: "company"
+postgres_password: "pass"
+project_author: "nd"
 project_license: MIT
-project_name: "odoo"
+project_name: "nd"
 smtp_default_from: ''
 smtp_relay_host: ''
 traefik_version: 2
