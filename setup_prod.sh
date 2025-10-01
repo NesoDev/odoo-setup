@@ -21,10 +21,25 @@ fi
 echo -e "\n=== Verificando Docker Compose ==="
 if ! docker compose version &> /dev/null && ! command -v docker-compose &> /dev/null; then
     echo "Instalando Docker Compose..."
-    echo "Actualizando lista de paquetes..."
-    sudo apt update
-    echo "Instalando plugin docker-compose..."
-    sudo apt install -y docker-compose-plugin
+    
+    # Agregar repositorio oficial de Docker
+    echo "Configurando repositorio de Docker..."
+    sudo apt-get update
+    sudo apt-get install -y ca-certificates curl gnupg lsb-release
+    
+    # Agregar la clave GPG oficial de Docker
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    
+    # Configurar el repositorio
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # Actualizar e instalar
+    sudo apt-get update
+    sudo apt-get install -y docker-compose-plugin
+    
     if ! docker compose version &> /dev/null; then
         echo "Error: Falló la instalación de Docker Compose."
         exit 1
