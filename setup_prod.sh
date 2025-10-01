@@ -6,12 +6,15 @@ set -e
 declare -A COMMAND_STATUS
 COMMAND_ORDER=()
 
+# Archivo temporal para compartir estados entre procesos
+STATUS_FILE="/tmp/doodba_setup_status_$$.txt"
+> "$STATUS_FILE"
+
 # Función para registrar el estado de un comando
 log_status() {
     local command_name="$1"
     local status="$2"
-    COMMAND_STATUS["$command_name"]="$status"
-    COMMAND_ORDER+=("$command_name")
+    echo "$command_name|$status" >> "$STATUS_FILE"
 }
 
 # Función para mostrar el resumen final
@@ -26,8 +29,8 @@ show_summary() {
     local error_count=0
     local skip_count=0
     
-    for cmd in "${COMMAND_ORDER[@]}"; do
-        local status="${COMMAND_STATUS[$cmd]}"
+    # Leer todos los estados del archivo
+    while IFS='|' read -r cmd status; do
         local symbol=""
         local color=""
         
@@ -50,16 +53,24 @@ show_summary() {
         esac
         
         printf "${color}[${symbol}] %-50s %s\033[0m\n" "$cmd" "$status"
-    done
+    done < "$STATUS_FILE"
+    
+    local total=$((success_count + error_count + skip_count))
     
     echo ""
     echo "=========================================="
-    printf "Total: %d | " "${#COMMAND_ORDER[@]}"
+    printf "Total: %d | " "$total"
     printf "\033[0;32mÉxitos: %d\033[0m | " "$success_count"
     printf "\033[0;31mErrores: %d\033[0m | " "$error_count"
     printf "\033[0;33mOmitidos: %d\033[0m\n" "$skip_count"
     echo "=========================================="
+    
+    # Limpiar archivo temporal
+    rm -f "$STATUS_FILE"
 }
+
+# Trap para mostrar resumen al salir
+trap show_summary EXIT
 
 echo "=== Verificando Docker ==="
 if ! command -v docker &> /dev/null; then
@@ -254,80 +265,62 @@ if ! docker compose version &> /dev/null; then
     fi
 fi
 
+STATUS_FILE=\"$STATUS_FILE\"
+
 echo \"Usando Docker Compose: \$DOCKER_COMPOSE_CMD\"
 
 echo \"Ejecutando git-aggregate...\"
 if invoke git-aggregate; then
-    echo \"SUCCESS:git-aggregate\" > /tmp/doodba_status_git_aggregate
+    echo \"Invoke: git-aggregate|SUCCESS\" >> \"\$STATUS_FILE\"
 else
-    echo \"ERROR:git-aggregate\" > /tmp/doodba_status_git_aggregate
+    echo \"Invoke: git-aggregate|ERROR\" >> \"\$STATUS_FILE\"
+    echo \"Error en git-aggregate, continuando...\"
 fi
 
 echo \"Ejecutando img-build...\"
 if invoke img-build --pull; then
-    echo \"SUCCESS:img-build\" > /tmp/doodba_status_img_build
+    echo \"Invoke: img-build|SUCCESS\" >> \"\$STATUS_FILE\"
 else
-    echo \"ERROR:img-build\" > /tmp/doodba_status_img_build
+    echo \"Invoke: img-build|ERROR\" >> \"\$STATUS_FILE\"
+    echo \"Error en img-build, continuando...\"
 fi
 
 echo \"Ejecutando start...\"
 if invoke start; then
-    echo \"SUCCESS:start\" > /tmp/doodba_status_start
+    echo \"Invoke: start|SUCCESS\" >> \"\$STATUS_FILE\"
 else
-    echo \"ERROR:start\" > /tmp/doodba_status_start
+    echo \"Invoke: start|ERROR\" >> \"\$STATUS_FILE\"
+    echo \"Error en start, continuando...\"
 fi
 
+# Esperar a que la base de datos esté lista
+echo \"Esperando que la base de datos esté lista...\"
+sleep 10
+
 echo \"Inicializando base de datos (con demo)...\"
-if \$DOCKER_COMPOSE_CMD run --rm odoo --stop-after-init -i base; then
-    echo \"SUCCESS:init-db-demo\" > /tmp/doodba_status_init_demo
+if \$DOCKER_COMPOSE_CMD run --rm odoo --stop-after-init -i base 2>&1; then
+    echo \"Inicialización DB (con demo)|SUCCESS\" >> \"\$STATUS_FILE\"
 else
-    echo \"ERROR:init-db-demo\" > /tmp/doodba_status_init_demo
+    echo \"Inicialización DB (con demo)|ERROR\" >> \"\$STATUS_FILE\"
+    echo \"Error en inicialización con demo, continuando...\"
 fi
 
 echo \"Inicializando base de datos (sin demo)...\"
-if \$DOCKER_COMPOSE_CMD run --rm odoo --without-demo=all --stop-after-init -i base; then
-    echo \"SUCCESS:init-db-no-demo\" > /tmp/doodba_status_init_no_demo
+if \$DOCKER_COMPOSE_CMD run --rm odoo --without-demo=all --stop-after-init -i base 2>&1; then
+    echo \"Inicialización DB (sin demo)|SUCCESS\" >> \"\$STATUS_FILE\"
 else
-    echo \"ERROR:init-db-no-demo\" > /tmp/doodba_status_init_no_demo
+    echo \"Inicialización DB (sin demo)|ERROR\" >> \"\$STATUS_FILE\"
+    echo \"Error en inicialización sin demo, continuando...\"
 fi
 
 echo \"Reiniciando servicios...\"
 if invoke restart; then
-    echo \"SUCCESS:restart\" > /tmp/doodba_status_restart
+    echo \"Invoke: restart|SUCCESS\" >> \"\$STATUS_FILE\"
 else
-    echo \"ERROR:restart\" > /tmp/doodba_status_restart
+    echo \"Invoke: restart|ERROR\" >> \"\$STATUS_FILE\"
+    echo \"Error en restart, continuando...\"
 fi
 '"
-
-# Leer estados de los comandos dentro de sg docker
-for status_file in /tmp/doodba_status_*; do
-    if [ -f "$status_file" ]; then
-        status_content=$(cat "$status_file")
-        IFS=':' read -r status_result command_name <<< "$status_content"
-        
-        case "$command_name" in
-            "git-aggregate")
-                log_status "Invoke: git-aggregate" "$status_result"
-                ;;
-            "img-build")
-                log_status "Invoke: img-build" "$status_result"
-                ;;
-            "start")
-                log_status "Invoke: start" "$status_result"
-                ;;
-            "init-db-demo")
-                log_status "Inicialización DB (con demo)" "$status_result"
-                ;;
-            "init-db-no-demo")
-                log_status "Inicialización DB (sin demo)" "$status_result"
-                ;;
-            "restart")
-                log_status "Invoke: restart" "$status_result"
-                ;;
-        esac
-        rm "$status_file"
-    fi
-done
 
 echo -e "\n=== Proceso completado ==="
 echo "Para aplicar los cambios del grupo docker, ejecuta: newgrp docker"
@@ -335,6 +328,3 @@ echo "O cierra sesión y vuelve a iniciar sesión."
 echo -e "\nPara iniciar los servicios en el futuro:"
 echo "  cd app"
 echo "  docker compose up -d"
-
-# Mostrar resumen final
-show_summary
